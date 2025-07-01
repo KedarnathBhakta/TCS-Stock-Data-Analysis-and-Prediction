@@ -1,6 +1,6 @@
 📈 TCS Stock Data Analysis & Prediction
 
-Welcome to the TCS Stock Data Analysis & Prediction project! This solution leverages advanced machine learning and deep learning (LSTM) to forecast TCS stock prices, with a focus on business usability, explainability, and automation.
+Welcome to the TCS Stock Data Analysis & Prediction project! This solution leverages advanced machine learning and deep learning (Keras LSTM) to forecast TCS stock prices, with a focus on business usability, explainability, and automation.
 
 
 🚀 Project Highlights
@@ -10,15 +10,16 @@ Welcome to the TCS Stock Data Analysis & Prediction project! This solution lever
 - Model explainability with SHAP
 - Downloadable predictions and business metrics
 - All data files organized in the data/ folder
+- **Unified Keras LSTM workflow for easy deployment and portability**
 
 
 📦 Project Structure
 
 ```
 .
-├── app_enhanced.py           # Streamlit dashboard app (with retraining)
+├── app_enhanced.py           # Streamlit dashboard app (with retraining, Keras LSTM)
 ├── app.py                    # (Optional) Original dashboard app
-├── retrain.py                # Standalone retraining script
+├── retrain.py                # Standalone retraining script (Keras LSTM)
 ├── requirements.txt          # Python dependencies
 ├── AUTOMATION_SETUP.md       # Automation & deployment guide
 ├── README.md                 # Project documentation
@@ -26,8 +27,8 @@ Welcome to the TCS Stock Data Analysis & Prediction project! This solution lever
 │   ├── TCS_stock_history_cleaned.csv
 │   ├── predictions_window10.csv
 │   ├── ... (other CSVs)
-├── lstm_model_windowXX.joblib   # Saved LSTM models (per window size)
-├── scaler_windowXX.joblib       # Saved scalers (per window size)
+├── lstm_model_windowXX.h5    # Saved Keras LSTM models (per window size)
+├── scaler_windowXX.joblib    # Saved scalers (per window size)
 ├── retrain.log               # Retraining logs
 ├── venv/                     # Python virtual environment (not tracked in git)
 ```
@@ -42,6 +43,7 @@ Welcome to the TCS Stock Data Analysis & Prediction project! This solution lever
 - Business metrics: volatility, max drawdown, Sharpe ratio
 - SHAP feature importance for explainability
 - Retrain model with a button or on a schedule
+- **Keras LSTM for all modeling (no PyTorch dependencies)**
 
 
 🔄 Automation & Retraining
@@ -49,6 +51,7 @@ Welcome to the TCS Stock Data Analysis & Prediction project! This solution lever
 - Use the dashboard for on-demand retraining (manual, Yahoo, or file upload)
 - Use retrain.py for scheduled retraining (see AUTOMATION_SETUP.md)
 - All new predictions and models are saved in the data/ folder
+- **Keras .h5 models and .joblib scalers ensure robust, portable deployment**
 
 
 📁 Data Management
@@ -78,6 +81,7 @@ Welcome to the TCS Stock Data Analysis & Prediction project! This solution lever
 - For best results, keep your data up-to-date in the data/ folder
 - Use the dashboard for business-friendly analysis and explainability
 - Check retrain.log for retraining history and troubleshooting
+- **No PyTorch required—Keras LSTM is used throughout for maximum compatibility**
 
 
 📞 Support
