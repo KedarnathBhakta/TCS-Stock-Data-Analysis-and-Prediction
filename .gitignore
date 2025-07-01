@@ -1,0 +1,7 @@
+venv/
+.vscode/
+*.joblib
+retrain.log
+__pycache__/
+*.pyc
+.DS_Store
