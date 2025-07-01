@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, r2_score
 import shap
@@ -16,6 +17,22 @@ from datetime import datetime, timedelta
 import yfinance as yf
 import warnings
 warnings.filterwarnings('ignore')
+
+# --- PyTorch LSTM Model Class ---
+class LSTMModel(nn.Module):
+    def __init__(self, input_size=1, hidden_size=50, num_layers=1):
+        super(LSTMModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, 1)
+    
+    def forward(self, x):
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        out, _ = self.lstm(x, (h0, c0))
+        out = self.fc(out[:, -1, :])
+        return out
 
 st.set_page_config(page_title='TCS Stock Price Prediction Dashboard - Enhanced', layout='wide')
 st.title('📈 TCS Stock Price Prediction Dashboard - Enhanced')
@@ -119,11 +136,24 @@ def prepare_sequences(df, window_size):
     return X_seq, y_seq, scaler
 
 def train_lstm(X_train, y_train, window_size):
-    model = Sequential()
-    model.add(LSTM(50, input_shape=(window_size, 1)))
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    model.fit(X_train, y_train, epochs=EPOCHS, batch_size=BATCH_SIZE, verbose=0)
+    # Convert to PyTorch tensors
+    X_train_tensor = torch.FloatTensor(X_train).unsqueeze(-1)  # Add feature dimension
+    y_train_tensor = torch.FloatTensor(y_train)
+    
+    # Create model
+    model = LSTMModel(input_size=1, hidden_size=50, num_layers=1)
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters())
+    
+    # Training loop
+    model.train()
+    for epoch in range(EPOCHS):
+        optimizer.zero_grad()
+        outputs = model(X_train_tensor)
+        loss = criterion(outputs.squeeze(), y_train_tensor)
+        loss.backward()
+        optimizer.step()
+    
     return model
 
 # --- Retraining Function ---
@@ -142,8 +172,6 @@ def retrain_model(df, window_size):
         split_idx = int(len(X_seq) * 0.8)
         X_train, X_test = X_seq[:split_idx], X_seq[split_idx:]
         y_train, y_test = y_seq[:split_idx], y_seq[split_idx:]
-        X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
-        X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
         st.session_state.retrain_progress = 40
         
         # Train model
@@ -198,9 +226,6 @@ else:
 X_seq, y_seq, scaler = prepare_sequences(df, window_size)
 split_idx = int(len(X_seq) * 0.8)
 X_train, X_test = X_seq[:split_idx], X_seq[split_idx:]
-y_train, y_test = y_seq[:split_idx], y_seq[split_idx:]
-X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
-X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
 
 # --- Model Save/Load ---
 if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
@@ -214,7 +239,13 @@ else:
         joblib.dump(scaler, SCALER_PATH)
     st.success('✅ New model trained and saved')
 
-pred_scaled = model.predict(X_test)
+# Make predictions
+model.eval()
+with torch.no_grad():
+    X_test_tensor = torch.FloatTensor(X_test).unsqueeze(-1)
+    pred_scaled = model(X_test_tensor).squeeze().numpy()
+
+# Inverse transform predictions
 pred = scaler.inverse_transform(pred_scaled.reshape(-1, 1)).flatten()
 y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
 

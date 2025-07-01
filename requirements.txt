@@ -1,8 +1,10 @@
+# Python 3.13 compatible requirements
+# Using PyTorch instead of TensorFlow for Python 3.13 compatibility
 streamlit>=1.28.0
 pandas>=1.5.0
 numpy>=1.21.0
 matplotlib>=3.5.0
-tensorflow>=2.10.0
+torch>=2.0.0
 scikit-learn>=1.1.0
 shap>=0.41.0
 joblib>=1.2.0
