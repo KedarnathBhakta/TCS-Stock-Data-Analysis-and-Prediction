@@ -10,6 +10,7 @@ import shap
 from sklearn.ensemble import RandomForestRegressor
 import joblib
 import os
+import warnings
 
 st.set_page_config(page_title='TCS Stock Price Prediction Dashboard', layout='wide')
 st.title('📈 TCS Stock Price Prediction Dashboard')
@@ -89,11 +90,27 @@ X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
 X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
 
 # --- Model Save/Load ---
-if os.path.exists(MODEL_PATH):
-    model = joblib.load(MODEL_PATH)
-else:
-    model = train_lstm(X_train, y_train, window_size)
-    joblib.dump(model, MODEL_PATH)
+model_loaded = False
+try:
+    if os.path.exists(MODEL_PATH):
+        try:
+            model = joblib.load(MODEL_PATH)
+            model_loaded = True
+            st.success('✅ Loaded existing trained model')
+        except Exception as e:
+            warnings.warn(f"Model load failed: {e}. Will retrain.")
+            st.warning(f"Model load failed: {e}. Retraining...")
+    else:
+        st.info('Model file missing. Retraining...')
+except Exception as e:
+    warnings.warn(f"Error checking model: {e}. Will retrain.")
+    st.warning(f"Error checking model: {e}. Retraining...")
+
+if not model_loaded:
+    with st.spinner('Training new model...'):
+        model = train_lstm(X_train, y_train, window_size)
+        joblib.dump(model, MODEL_PATH)
+    st.success('✅ New model trained and saved (auto)')
 
 pred_scaled = model.predict(X_test)
 pred = scaler.inverse_transform(pred_scaled.reshape(-1, 1)).flatten()

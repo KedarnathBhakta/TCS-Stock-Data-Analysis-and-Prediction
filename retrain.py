@@ -8,17 +8,14 @@ Can be scheduled to run automatically using Task Scheduler (Windows) or cron (Li
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, r2_score
 import joblib
 import os
 import logging
 from datetime import datetime
 import yfinance as yf
 import warnings
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
 warnings.filterwarnings('ignore')
 
 # Configure logging
@@ -31,28 +28,12 @@ logging.basicConfig(
     ]
 )
 
-# --- PyTorch LSTM Model Class ---
-class LSTMModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=50, num_layers=1):
-        super(LSTMModel, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, 1)
-    
-    def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        out, _ = self.lstm(x, (h0, c0))
-        out = self.fc(out[:, -1, :])
-        return out
-
 class TCSModelRetrainer:
     def __init__(self, window_size=10, epochs=30, batch_size=16):
         self.window_size = window_size
         self.epochs = epochs
         self.batch_size = batch_size
-        self.model_path = f'lstm_model_window{window_size}.joblib'
+        self.model_path = f'lstm_model_window{window_size}.h5'
         self.scaler_path = f'scaler_window{window_size}.joblib'
         self.predictions_path = f'predictions_window{window_size}.csv'
         
@@ -99,39 +80,17 @@ class TCSModelRetrainer:
         return X_seq, y_seq, scaler
     
     def train_lstm(self, X_train, y_train):
-        """Train LSTM model using PyTorch"""
-        # Convert to PyTorch tensors
-        X_train_tensor = torch.FloatTensor(X_train).unsqueeze(-1)  # Add feature dimension
-        y_train_tensor = torch.FloatTensor(y_train)
-        
-        # Create model
-        model = LSTMModel(input_size=1, hidden_size=50, num_layers=1)
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(model.parameters())
-        
-        # Training loop
-        model.train()
-        logging.info(f"Training LSTM model with {self.epochs} epochs, batch size {self.batch_size}")
-        for epoch in range(self.epochs):
-            optimizer.zero_grad()
-            outputs = model(X_train_tensor)
-            loss = criterion(outputs.squeeze(), y_train_tensor)
-            loss.backward()
-            optimizer.step()
-            
-            if epoch % 10 == 0:
-                logging.info(f"Epoch {epoch}/{self.epochs}, Loss: {loss.item():.6f}")
-        
+        """Train LSTM model using Keras"""
+        model = Sequential()
+        model.add(LSTM(50, input_shape=(self.window_size, 1)))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mean_squared_error')
+        model.fit(X_train, y_train, epochs=self.epochs, batch_size=self.batch_size, verbose=0)
         return model
     
     def evaluate_model(self, model, X_test, y_test, scaler):
         """Evaluate model performance"""
-        model.eval()
-        with torch.no_grad():
-            X_test_tensor = torch.FloatTensor(X_test).unsqueeze(-1)
-            pred_scaled = model(X_test_tensor).squeeze().numpy()
-        
-        # Inverse transform predictions
+        pred_scaled = model.predict(X_test)
         pred = scaler.inverse_transform(pred_scaled.reshape(-1, 1)).flatten()
         y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
         
@@ -144,7 +103,7 @@ class TCSModelRetrainer:
     def save_model_and_predictions(self, model, scaler, pred, actual, df):
         """Save model, scaler, and predictions"""
         # Save model
-        joblib.dump(model, self.model_path)
+        model.save(self.model_path)
         logging.info(f"Model saved to {self.model_path}")
         
         # Save scaler

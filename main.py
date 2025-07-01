@@ -13,7 +13,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 import shap
 
 # Load the dataset
-file_path = 'TCS_stock_history.csv'
+file_path = 'data/default/TCS_stock_history.csv'
 data = pd.read_csv(file_path)
 
 print('Initial Data Overview:')

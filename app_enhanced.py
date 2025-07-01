@@ -16,23 +16,10 @@ import threading
 from datetime import datetime, timedelta
 import yfinance as yf
 import warnings
+from sklearn.linear_model import LinearRegression
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import LSTM, Dense
 warnings.filterwarnings('ignore')
-
-# --- PyTorch LSTM Model Class ---
-class LSTMModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=50, num_layers=1):
-        super(LSTMModel, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, 1)
-    
-    def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        out, _ = self.lstm(x, (h0, c0))
-        out = self.fc(out[:, -1, :])
-        return out
 
 st.set_page_config(page_title='TCS Stock Price Prediction Dashboard - Enhanced', layout='wide')
 st.title('📈 TCS Stock Price Prediction Dashboard - Enhanced')
@@ -79,7 +66,7 @@ uploaded_file = st.sidebar.file_uploader('Upload a CSV file with Date and Close 
 
 EPOCHS = 30
 BATCH_SIZE = 16
-MODEL_PATH = f'lstm_model_window{window_size}.joblib'
+MODEL_PATH = f'lstm_model_window{window_size}.h5'
 SCALER_PATH = f'scaler_window{window_size}.joblib'
 
 # --- Data Loading Functions ---
@@ -136,25 +123,18 @@ def prepare_sequences(df, window_size):
     return X_seq, y_seq, scaler
 
 def train_lstm(X_train, y_train, window_size):
-    # Convert to PyTorch tensors
-    X_train_tensor = torch.FloatTensor(X_train).unsqueeze(-1)  # Add feature dimension
-    y_train_tensor = torch.FloatTensor(y_train)
-    
-    # Create model
-    model = LSTMModel(input_size=1, hidden_size=50, num_layers=1)
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters())
-    
-    # Training loop
-    model.train()
-    for epoch in range(EPOCHS):
-        optimizer.zero_grad()
-        outputs = model(X_train_tensor)
-        loss = criterion(outputs.squeeze(), y_train_tensor)
-        loss.backward()
-        optimizer.step()
-    
+    model = Sequential()
+    model.add(LSTM(50, input_shape=(window_size, 1)))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    model.fit(X_train, y_train, epochs=EPOCHS, batch_size=BATCH_SIZE, verbose=0)
     return model
+
+# --- Train Linear Regression Model ---
+def train_linear_regression(X_train, y_train):
+    lr_model = LinearRegression()
+    lr_model.fit(X_train, y_train)
+    return lr_model
 
 # --- Retraining Function ---
 def retrain_model(df, window_size):
@@ -179,8 +159,12 @@ def retrain_model(df, window_size):
             model = train_lstm(X_train, y_train, window_size)
             st.session_state.retrain_progress = 80
         
+        # Train Linear Regression model
+        lr_model = train_linear_regression(X_train, y_train)
+        st.session_state.retrain_progress = 90
+        
         # Save model and scaler
-        joblib.dump(model, MODEL_PATH)
+        model.save(MODEL_PATH)
         joblib.dump(scaler, SCALER_PATH)
         st.session_state.retrain_progress = 100
         
@@ -226,27 +210,45 @@ else:
 X_seq, y_seq, scaler = prepare_sequences(df, window_size)
 split_idx = int(len(X_seq) * 0.8)
 X_train, X_test = X_seq[:split_idx], X_seq[split_idx:]
+y_train, y_test = y_seq[:split_idx], y_seq[split_idx:]
 
 # --- Model Save/Load ---
-if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
-    model = joblib.load(MODEL_PATH)
-    scaler = joblib.load(SCALER_PATH)
-    st.success('✅ Loaded existing trained model')
-else:
+import warnings
+model_loaded = False
+try:
+    if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
+        try:
+            model = load_model(MODEL_PATH)
+            scaler = joblib.load(SCALER_PATH)
+            model_loaded = True
+            st.success('✅ Loaded existing trained model')
+        except Exception as e:
+            warnings.warn(f"Model/scaler load failed: {e}. Will retrain.")
+            st.warning(f"Model/scaler load failed: {e}. Retraining...")
+    else:
+        st.info('Model or scaler file missing. Retraining...')
+except Exception as e:
+    warnings.warn(f"Error checking model/scaler: {e}. Will retrain.")
+    st.warning(f"Error checking model/scaler: {e}. Retraining...")
+
+if not model_loaded:
     with st.spinner('Training new model...'):
         model = train_lstm(X_train, y_train, window_size)
-        joblib.dump(model, MODEL_PATH)
+        model.save(MODEL_PATH)
         joblib.dump(scaler, SCALER_PATH)
-    st.success('✅ New model trained and saved')
+    st.success('✅ New model trained and saved (auto)')
 
-# Make predictions
-model.eval()
-with torch.no_grad():
-    X_test_tensor = torch.FloatTensor(X_test).unsqueeze(-1)
-    pred_scaled = model(X_test_tensor).squeeze().numpy()
+# Train Linear Regression model
+lr_model = train_linear_regression(X_train, y_train)
 
-# Inverse transform predictions
-pred = scaler.inverse_transform(pred_scaled.reshape(-1, 1)).flatten()
+# LSTM predictions
+pred_scaled = model.predict(X_test)
+pred_lstm = scaler.inverse_transform(pred_scaled.reshape(-1, 1)).flatten()
+
+# Linear Regression predictions
+pred_lr_scaled = lr_model.predict(X_test)
+pred_lr = scaler.inverse_transform(pred_lr_scaled.reshape(-1, 1)).flatten()
+
 y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
 
 # --- Date Range Filter ---
@@ -260,7 +262,8 @@ st.header('Actual vs Predicted Close Price')
 st.caption('Visualize how well the model tracks the actual stock price.')
 fig1, ax1 = plt.subplots(figsize=(12, 5))
 ax1.plot(range(end_idx - start_idx), y_test_inv[start_idx:end_idx], label='Actual Close', color='#008080')
-ax1.plot(range(end_idx - start_idx), pred[start_idx:end_idx], label='Predicted Close', color='#FF1493', alpha=0.7)
+ax1.plot(range(end_idx - start_idx), pred_lstm[start_idx:end_idx], label='LSTM Predicted Close', color='#FF1493', alpha=0.7)
+ax1.plot(range(end_idx - start_idx), pred_lr[start_idx:end_idx], label='LR Predicted Close', color='#0000FF', alpha=0.7)
 ax1.set_xlabel('Time Index')
 ax1.set_ylabel('Close Price')
 ax1.set_title('Actual vs Predicted Close Price')
@@ -269,13 +272,15 @@ st.pyplot(fig1)
 
 # Returns
 actual_returns = pd.Series(y_test_inv).pct_change().fillna(0)
-predicted_returns = pd.Series(pred).pct_change().fillna(0)
+pred_lstm_returns = pd.Series(pred_lstm).pct_change().fillna(0)
+pred_lr_returns = pd.Series(pred_lr).pct_change().fillna(0)
 
 st.header('Actual vs Predicted Returns')
 st.caption('Daily returns (percentage change) for actual and predicted prices.')
 fig2, ax2 = plt.subplots(figsize=(12, 4))
 ax2.plot(actual_returns[start_idx:end_idx], label='Actual Returns', color='#008080')
-ax2.plot(predicted_returns[start_idx:end_idx], label='Predicted Returns', color='#FF1493', alpha=0.7)
+ax2.plot(pred_lstm_returns[start_idx:end_idx], label='LSTM Returns', color='#FF1493', alpha=0.7)
+ax2.plot(pred_lr_returns[start_idx:end_idx], label='LR Returns', color='#0000FF', alpha=0.7)
 ax2.set_xlabel('Time Index')
 ax2.set_ylabel('Returns')
 ax2.set_title('Actual vs Predicted Returns')
@@ -284,12 +289,14 @@ st.pyplot(fig2)
 
 # Cumulative Returns
 actual_cum_returns = (1 + actual_returns).cumprod() - 1
-predicted_cum_returns = (1 + predicted_returns).cumprod() - 1
+pred_lstm_cum_returns = (1 + pred_lstm_returns).cumprod() - 1
+pred_lr_cum_returns = (1 + pred_lr_returns).cumprod() - 1
 st.header('Actual vs Predicted Cumulative Returns')
 st.caption('Cumulative returns show the growth of a hypothetical investment.')
 fig3, ax3 = plt.subplots(figsize=(12, 4))
 ax3.plot(actual_cum_returns[start_idx:end_idx], label='Actual Cumulative Returns', color='#008080')
-ax3.plot(predicted_cum_returns[start_idx:end_idx], label='Predicted Cumulative Returns', color='#FF1493', alpha=0.7)
+ax3.plot(pred_lstm_cum_returns[start_idx:end_idx], label='LSTM Cumulative Returns', color='#FF1493', alpha=0.7)
+ax3.plot(pred_lr_cum_returns[start_idx:end_idx], label='LR Cumulative Returns', color='#0000FF', alpha=0.7)
 ax3.set_xlabel('Time Index')
 ax3.set_ylabel('Cumulative Returns')
 ax3.set_title('Actual vs Predicted Cumulative Returns')
@@ -300,9 +307,10 @@ st.pyplot(fig3)
 st.header('Download Predictions')
 st.caption('Download the predicted and actual close prices for further analysis.')
 pred_df = pd.DataFrame({
-    'Date': df['Date'].iloc[window_size:].iloc[-len(pred):],
+    'Date': df['Date'].iloc[window_size:].iloc[-len(pred_lstm):],
     'Actual_Close': y_test_inv,
-    'Predicted_Close': pred
+    'LSTM_Predicted_Close': pred_lstm,
+    'LR_Predicted_Close': pred_lr
 })
 st.download_button('Download Predictions as CSV', pred_df.to_csv(index=False), file_name='predictions.csv', mime='text/csv')
 
@@ -320,12 +328,14 @@ def max_drawdown(returns):
 col1, col2 = st.columns(2)
 with col1:
     st.write(f"**Actual Volatility:** {np.std(actual_returns) * np.sqrt(252):.4f}")
-    st.write(f"**Predicted Volatility:** {np.std(predicted_returns) * np.sqrt(252):.4f}")
+    st.write(f"**LSTM Volatility:** {np.std(pred_lstm_returns) * np.sqrt(252):.4f}")
+    st.write(f"**LR Volatility:** {np.std(pred_lr_returns) * np.sqrt(252):.4f}")
     st.write(f"**Actual Max Drawdown:** {max_drawdown(actual_returns):.2%}")
 with col2:
-    st.write(f"**Predicted Max Drawdown:** {max_drawdown(predicted_returns):.2%}")
-    st.write(f"**Actual Sharpe Ratio:** {sharpe_ratio(actual_returns):.2f}")
-    st.write(f"**Predicted Sharpe Ratio:** {sharpe_ratio(predicted_returns):.2f}")
+    st.write(f"**LSTM Max Drawdown:** {max_drawdown(pred_lstm_returns):.2%}")
+    st.write(f"**LR Max Drawdown:** {max_drawdown(pred_lr_returns):.2%}")
+    st.write(f"**LSTM Sharpe Ratio:** {sharpe_ratio(pred_lstm_returns):.2f}")
+    st.write(f"**LR Sharpe Ratio:** {sharpe_ratio(pred_lr_returns):.2f}")
 
 # --- Model Performance Report ---
 st.header('Model Performance Report')
@@ -333,12 +343,15 @@ st.caption('Summary of model accuracy and last predictions.')
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric('Window Size', window_size)
-    st.metric('R² Score', f"{r2_score(y_test_inv, pred):.4f}")
+    st.metric('LSTM R² Score', f"{r2_score(y_test_inv, pred_lstm):.4f}")
+    st.metric('LR R² Score', f"{r2_score(y_test_inv, pred_lr):.4f}")
 with col2:
-    st.metric('MSE', f"{mean_squared_error(y_test_inv, pred):.2f}")
+    st.metric('LSTM MSE', f"{mean_squared_error(y_test_inv, pred_lstm):.2f}")
+    st.metric('LR MSE', f"{mean_squared_error(y_test_inv, pred_lr):.2f}")
     st.metric('Last Actual Close', f"₹{y_test_inv[-1]:.2f}")
 with col3:
-    st.metric('Last Predicted Close', f"₹{pred[-1]:.2f}")
+    st.metric('Last LSTM Predicted Close', f"₹{pred_lstm[-1]:.2f}")
+    st.metric('Last LR Predicted Close', f"₹{pred_lr[-1]:.2f}")
     if st.session_state.last_retrain_time:
         st.metric('Last Retrained', st.session_state.last_retrain_time.strftime('%Y-%m-%d'))
 
